@@ -1,0 +1,100 @@
+<div class="login-background">
+  <div class="container" style="max-width: 500px">
+    <div class="card shadow login-card fade-page">
+      <div class="card-body">
+        <h3 class="card-title text-center mb-4">Trocar Senha</h3>
+
+        <!-- SENHA ATUAL -->
+        <div class="mb-3">
+          <label class="form-label">Senha Atual</label>
+
+          <div class="password-input-container">
+            <input
+              [type]="mostrarAtual ? 'text' : 'password'"
+              class="form-control"
+              [(ngModel)]="senhaAtual"
+              name="senhaAtual"
+              placeholder="Digite sua senha atual"
+              required
+            />
+
+            <span class="toggle-password" (click)="mostrarAtual = !mostrarAtual">
+              <i class="fa" [ngClass]="mostrarAtual ? 'fa-eye-slash' : 'fa-eye'"></i>
+            </span>
+          </div>
+
+          @if (senhaAtual.length === 0 && submitted) {
+            <small class="text-danger">Informe a senha atual.</small>
+          }
+        </div>
+
+        <!-- NOVA SENHA -->
+        <div class="mb-3">
+          <label class="form-label">Nova Senha</label>
+
+          <div class="password-input-container">
+            <input
+              [type]="mostrarNova ? 'text' : 'password'"
+              class="form-control"
+              [(ngModel)]="novaSenha"
+              name="novaSenha"
+              placeholder="Crie uma nova senha"
+              required
+              (input)="calcularForca()"
+            />
+
+            <span class="toggle-password" (click)="mostrarNova = !mostrarNova">
+              <i class="fa" [ngClass]="mostrarNova ? 'fa-eye-slash' : 'fa-eye'"></i>
+            </span>
+          </div>
+
+          <div class="password-strength mt-1" [ngClass]="classeForca">
+            Força: {{ rotuloForca }}
+          </div>
+
+          <ul class="password-rules small mb-0">
+            <li [class.text-success]="regras.minLen">Mínimo 8 caracteres</li>
+            <li [class.text-success]="regras.upper">Letra maiúscula</li>
+            <li [class.text-success]="regras.lower">Letra minúscula</li>
+            <li [class.text-success]="regras.number">Número</li>
+            <li [class.text-success]="regras.special">Caractere especial</li>
+          </ul>
+        </div>
+
+        <!-- CONFIRMAR SENHA -->
+        <div class="mb-3">
+          <label class="form-label">Confirmar Nova Senha</label>
+
+          <div class="password-input-container">
+            <input
+              [type]="mostrarConfirm ? 'text' : 'password'"
+              class="form-control"
+              [(ngModel)]="confirmarSenha"
+              name="confirmarSenha"
+              placeholder="Repita a nova senha"
+              required
+            />
+
+            <span class="toggle-password" (click)="mostrarConfirm = !mostrarConfirm">
+              <i class="fa" [ngClass]="mostrarConfirm ? 'fa-eye-slash' : 'fa-eye'"></i>
+            </span>
+          </div>
+
+          @if (!senhasConferem() && confirmarSenha.length) {
+            <small class="text-danger">As senhas não coincidem.</small>
+          }
+        </div>
+
+        <!-- SALVAR -->
+        <button
+          class="btn btn-primary w-100 mb-3"
+          (click)="trocarSenha()"
+          [disabled]="!podeSalvar() || loading"
+        >
+          {{ loading ? 'Salvando...' : 'Salvar Nova Senha' }}
+        </button>
+
+      </div>
+    </div>
+  </div>
+</div>
