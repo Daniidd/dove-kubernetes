@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dove-frontend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: dove-frontend
+  template:
+    metadata:
+      labels:
+        app: dove-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: mensal-frontend:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
