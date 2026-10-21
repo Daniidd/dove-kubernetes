@@ -31,7 +31,7 @@ Todos os componentes da aplicação (frontend, backend e banco de dados) executa
 
 ```mermaid
 flowchart TB
-    user["Navegador<br/>localhost:8081"]
+    user["Navegador<br/>127.0.0.1:porta"]
 
     subgraph cluster["Cluster Minikube"]
         svcFront["Service dove-frontend<br/>NodePort :80"]
@@ -61,7 +61,7 @@ flowchart TB
         sec["Secrets mysql-secret, backend-secret"]
     end
 
-    user -->|port-forward| svcFront
+    user -->|minikube service| svcFront
     svcFront --> f1 & f2 & f3
     depFront -->|/api/| svcBack
     svcBack --> b1 & b2 & b3
@@ -94,7 +94,7 @@ flowchart TB
 
 ### Comunicação entre os componentes
 
-- O navegador acessa somente o **frontend**.
+- O navegador acessa somente o **frontend**, pela URL que o comando `minikube service` mostra. O comando abre um túnel até o NodePort do Service `dove-frontend`, que distribui as requisições entre os 3 Pods do Nginx.
 - O **Nginx** do frontend encaminha as requisições `/api/` para o Service `backend`, usando o DNS interno do cluster.
 - O Service `backend` distribui as conexões entre os 3 Pods com o rótulo `app=dove-backend`.
 - O **backend** conecta ao banco pelo nome DNS `mysql`, definido no ConfigMap.
@@ -102,7 +102,7 @@ flowchart TB
 
 Os Services fornecem endereços estáveis, então nenhum componente depende dos IPs dos Pods, que mudam a cada recriação.
 
-Como o Nginx faz o proxy de `/api/`, o navegador enxerga frontend e API na mesma origem (`localhost:8081`), sem necessidade de configuração de CORS para o acesso via cluster.
+Como o Nginx faz o proxy de `/api/`, o navegador enxerga frontend e API na mesma origem (a URL aberta pelo `minikube service`), sem necessidade de configuração de CORS para o acesso via cluster.
 
 ### Recursos Kubernetes
 
@@ -112,10 +112,10 @@ Como o Nginx faz o proxy de `/api/`, o navegador enxerga frontend e API na mesma
 | `k8s/mysql-deployment.yaml` | Deployment `mysql` | MySQL 8.4, 1 réplica, estratégia `Recreate`, readiness probe |
 | `k8s/mysql-service.yaml` | Service `mysql` (ClusterIP) | Acesso interno na porta 3306 |
 | `k8s/backend-configmap.yaml` | ConfigMap `backend-config` | Configurações não sigilosas (perfil Spring, JDBC, usuário) |
-| `k8s/backend-deployment.yaml` | Deployment `dove-backend` | Spring Boot, 3 réplicas, readiness e liveness probes |
+| `k8s/backend-deployment.yaml` | Deployment `dove-backend` | Spring Boot, 3 réplicas, startup, readiness e liveness probes |
 | `k8s/backend-service.yaml` | Service `backend` (ClusterIP) | Balanceamento interno na porta 8080 |
 | `k8s/frontend-deployment.yaml` | Deployment `dove-frontend` | Angular/Nginx, 3 réplicas, readiness probe |
-| `k8s/frontend-service.yaml` | Service `dove-frontend` (NodePort) | Exposição do frontend na porta 80 |
+| `k8s/frontend-service.yaml` | Service `dove-frontend` (NodePort) | Exposição do frontend fora do cluster, porta 80 |
 | Criado por comando | Secret `mysql-secret` | Senhas do MySQL |
 | Criado por comando | Secret `backend-secret` | Chave de assinatura JWT |
 
@@ -155,8 +155,8 @@ dove-kubernetes/
 
 ### Dockerfiles
 
-- **Backend** (`dove-restaurante-api/Dockerfile`): compila o projeto com Maven Wrapper (`./mvnw clean package -DskipTests`) e executa o WAR gerado com Java 17.
-- **Frontend** (`dove-restaurante-web/Dockerfile`): build multi-stage. Usa Node 20 para compilar o Angular (`npm ci` e build para `dist/dove-restaurante/browser`) e Nginx para servir os arquivos estáticos e fazer o proxy da API.
+- **Backend** (`dove-restaurante-api/Dockerfile`): build em duas etapas. A primeira compila o projeto com Maven Wrapper (`./mvnw clean package -DskipTests`) usando o JDK 17; a segunda executa o WAR gerado com o JRE 17, com um usuário sem privilégios de administrador.
+- **Frontend** (`dove-restaurante-web/Dockerfile`): build em duas etapas. Usa Node 20 para compilar o Angular (`npm ci` e build para `dist/dove-restaurante/browser`) e Nginx para servir os arquivos estáticos e fazer o proxy da API.
 
 ## 3. Pré-requisitos
 
@@ -272,15 +272,16 @@ kubectl get pvc
 kubectl apply -f .\k8s\backend-configmap.yaml
 kubectl apply -f .\k8s\backend-service.yaml
 kubectl apply -f .\k8s\backend-deployment.yaml
-kubectl rollout status deployment/dove-backend --timeout=300s
+kubectl rollout status deployment/dove-backend --timeout=400s
 ```
 
-O ConfigMap define `SPRING_PROFILES_ACTIVE=prod`, `DB_URL=jdbc:mysql://mysql:3306/dove` e `DB_USERNAME=dove_user`. A senha vem do Secret `mysql-secret`. Na primeira inicialização, o Hibernate cria as tabelas do banco.
+O ConfigMap define `SPRING_PROFILES_ACTIVE=prod`, `DB_URL=jdbc:mysql://mysql:3306/dove` e `DB_USERNAME=dove_user`. O perfil `prod` faz o Spring Boot carregar o `application-prod.properties`, que lê essas variáveis. A senha vem do Secret `mysql-secret`. Na primeira inicialização, o Hibernate cria as tabelas do banco.
 
-O backend possui duas probes do tipo `tcpSocket` na porta 8080:
+O backend possui três probes do tipo `tcpSocket` na porta 8080:
 
+- **Startup probe:** dá até 6 minutos para o Spring Boot iniciar. Enquanto ela não passa, as outras probes não são verificadas, então uma inicialização lenta (por exemplo, com as 3 réplicas subindo ao mesmo tempo depois de um `minikube start`) não faz o contêiner ser reiniciado.
 - **Readiness probe:** o Pod só passa a receber tráfego do Service depois que o Spring Boot abre a porta. Assim, o `rollout status` só conclui quando a aplicação está de fato no ar.
-- **Liveness probe:** se a porta deixar de responder, o Kubernetes reinicia o contêiner automaticamente.
+- **Liveness probe:** se a porta deixar de responder depois que a aplicação já subiu, o Kubernetes reinicia o contêiner automaticamente.
 
 A verificação é por TCP, e não por HTTP, porque a rota `/` responde 403 por causa do Spring Security, o que o Kubernetes consideraria falha.
 
@@ -322,16 +323,12 @@ Nomes de Pods, IPs e NodePorts são gerados dinamicamente e serão diferentes em
 Em um **novo PowerShell**, mantendo-o aberto:
 
 ```powershell
-kubectl port-forward service/dove-frontend 8081:80
-```
-
-Acesse **http://localhost:8081**. Para encerrar, pressione `Ctrl+C`.
-
-Como alternativa, já que o Service é NodePort:
-
-```powershell
 minikube service dove-frontend --url
 ```
+
+O comando abre um túnel até o NodePort do Service `dove-frontend` e mostra a URL de acesso, por exemplo `http://127.0.0.1:54321`. A porta é escolhida a cada execução. Abra essa URL no navegador e mantenha o terminal aberto enquanto usar a aplicação; para encerrar, pressione `Ctrl+C`.
+
+O túnel é necessário porque, com o Minikube no driver Docker do Windows, a porta do NodePort não fica acessível diretamente pelo navegador. Como o acesso passa pelo NodePort, o próprio Service distribui as requisições entre os 3 Pods do frontend.
 
 ### 11.2 Criar o usuário administrador (banco novo)
 
@@ -359,7 +356,7 @@ SELECT id, nome, username, email, tipo FROM tb_usuario WHERE username = 'admin';
 exit;
 ```
 
-Agora faça login em http://localhost:8081 com:
+Agora faça login na URL aberta pelo `minikube service` com:
 
 | Usuário | Senha |
 |---|---|
@@ -393,10 +390,10 @@ kubectl logs -l app=dove-backend -f --prefix --tail=0 | Select-String "Hibernate
 **Terminal 2**, acesso à aplicação:
 
 ```powershell
-kubectl port-forward service/dove-frontend 8081:80
+minikube service dove-frontend --url
 ```
 
-Em http://localhost:8081, faça login e navegue entre as telas que buscam dados (cardápio, pedidos, ingredientes), atualizando a página algumas vezes. No Terminal 1, as consultas passam a aparecer com prefixos de Pods diferentes:
+Na URL mostrada pelo comando, faça login e navegue entre as telas que buscam dados (cardápio, pedidos, ingredientes), atualizando a página algumas vezes. No Terminal 1, as consultas passam a aparecer com prefixos de Pods diferentes:
 
 ```text
 [pod/dove-backend-6b9447ff8-p6q2j/backend] Hibernate:
@@ -474,11 +471,15 @@ kubectl get deployments
 
 **Resultado obtido:** após a exclusão de `dove-frontend-7f457f4859-s8cnz`, o Kubernetes criou automaticamente `dove-frontend-7f457f4859-5cjsb`, que ficou pronto (`1/1`) em cerca de 12 segundos, e o Deployment voltou a 3/3 réplicas. O mesmo teste no backend recriou `dove-backend-6b9447ff8-k4zn5` como `dove-backend-6b9447ff8-2zxmb` em cerca de 72 segundos, tempo maior por causa da inicialização do Spring Boot.
 
+> O Pod antigo pode aparecer como `Completed` ou `Error` antes de sumir. Isso é apenas o código de saída do contêiner ao receber o sinal de encerramento (0 no Nginx, 143 na JVM) e não indica falha.
+
 ![Self-healing](evidencias/07-self-healing.png)
 
 ## 14. Persistência do banco
 
-O PVC `mysql-pvc` reserva 2Gi (`ReadWriteOnce`) e é montado em `/var/lib/mysql` no Pod do MySQL. Assim, os dados sobrevivem à recriação do Pod.
+O PVC `mysql-pvc` solicita 2Gi (`ReadWriteOnce`). O Minikube cria automaticamente um PersistentVolume (PV) pela StorageClass `standard`, que fica no nó do cluster, fora do Pod. O Pod do MySQL apenas monta esse volume em `/var/lib/mysql`.
+
+Assim, se o Pod do MySQL for excluído ou falhar, o Deployment cria um novo Pod, que monta o mesmo PVC e encontra os dados intactos. Os dados só são perdidos se o PVC for excluído ou se o cluster for apagado (`minikube delete`).
 
 ```powershell
 kubectl get pvc mysql-pvc
@@ -522,10 +523,11 @@ kubectl describe pvc mysql-pvc
 | **Deployment** | Define o modelo dos Pods (imagem, variáveis, probes, volumes), mantém o número de réplicas, recria Pods que falham e faz atualizações graduais (rolling update) |
 | **Service** | Endereço e nome DNS estáveis que encaminham tráfego aos Pods selecionados por rótulo |
 | **ClusterIP** | Service acessível só dentro do cluster; usado no backend e no MySQL |
-| **NodePort** | Service exposto em uma porta do nó; usado no frontend |
+| **NodePort** | Service exposto em uma porta do nó; usado no frontend e acessado pelo `minikube service` |
 | **ConfigMap** | Configurações não sigilosas do backend (perfil Spring, URL JDBC, usuário do banco) |
 | **Secret** | Senhas do banco e chave JWT, injetadas como variáveis de ambiente |
 | **PersistentVolumeClaim** | Armazenamento persistente dos dados do MySQL |
+| **Startup probe** | Dá tempo para a aplicação iniciar antes de as outras probes começarem; configurada no backend |
 | **Readiness probe** | Indica quando o Pod pode receber tráfego; configurada no frontend, no backend e no MySQL |
 | **Liveness probe** | Reinicia o contêiner se ele parar de responder; configurada no backend |
 | **Estratégia Recreate** | Usada no MySQL para evitar dois Pods montando o mesmo volume `ReadWriteOnce` |
@@ -543,7 +545,7 @@ Correspondência entre a orquestração do Mensal 1 e a implantação atual:
 | `environment` com valores comuns | ConfigMap `backend-config` |
 | Senhas no arquivo `.env` | Secrets `mysql-secret` e `backend-secret` |
 | `depends_on: condition: service_healthy` | Ordem de aplicação dos manifestos + readiness probes |
-| `ports: "80:80"` no frontend | Service NodePort + `kubectl port-forward` |
+| `ports: "80:80"` no frontend | Service NodePort + `minikube service` |
 | `restart: unless-stopped` | Deployment recria Pods automaticamente + liveness probe |
 | 1 contêiner por serviço | 3 réplicas no backend e no frontend, com balanceamento pelo Service |
 
@@ -557,10 +559,11 @@ O código-fonte da aplicação não precisou ser alterado: o backend continua le
 | `CreateContainerConfigError` | Verificar se `mysql-secret`, `backend-secret` e `backend-config` existem com as chaves corretas |
 | MySQL não inicializa | `kubectl logs deployment/mysql --tail=100`; verificar PVC e senhas |
 | Backend não conecta ao banco | Verificar o Service `mysql`, se o MySQL está pronto e a senha no Secret |
-| Backend fica em `0/1` por muito tempo | Normal na primeira subida; acompanhar com `kubectl logs deployment/dove-backend --tail=100` |
-| Backend reiniciando (`RESTARTS` aumentando) | `kubectl describe pod NOME_DO_POD`; se aparecer "Liveness probe failed", o Spring Boot está demorando mais de 2 minutos para subir: aumentar `initialDelaySeconds` da liveness probe para 180 |
+| Backend fica em `0/1` por alguns minutos | Normal na subida, principalmente depois de um `minikube start`, quando as 3 réplicas iniciam juntas; acompanhar com `kubectl logs deployment/dove-backend --tail=100` |
+| Backend reiniciando (`RESTARTS` aumentando) | `kubectl describe pod NOME_DO_POD`; se aparecer "Startup probe failed", o Spring Boot não subiu em 6 minutos: reduzir para 1 réplica (`kubectl scale deployment/dove-backend --replicas=1`), aguardar ficar pronta e voltar para 3 |
+| Login retorna 502 (Bad Gateway) | O Nginx não encontrou nenhum backend pronto; verificar com `kubectl get pods` se o backend está `1/1` |
 | Frontend abre, mas a API falha | Verificar `nginx.conf`, o Service `backend` e os Pods do backend |
-| Porta 8081 ocupada | Usar `kubectl port-forward service/dove-frontend 8082:80` e abrir http://localhost:8082 |
+| Página não abre | Verificar se o terminal do `minikube service` continua aberto; se fechou, rodar o comando de novo e usar a nova URL |
 | Login falha em banco novo | Executar o cadastro do administrador (seção 11.2) |
 | PVC em `Pending` | `kubectl describe pvc mysql-pvc` e verificar a StorageClass |
 
@@ -573,6 +576,7 @@ kubectl get events --sort-by=.lastTimestamp
 ```
 
 ## Limpeza do ambiente
+
 > O primeiro comando também remove o PVC `mysql-pvc`, apagando os dados do banco. Para encerrar sem perder dados, use apenas `minikube stop`.
 
 ```powershell
