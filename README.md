@@ -396,14 +396,14 @@ minikube service dove-frontend --url
 Na URL mostrada pelo comando, faça login e navegue entre as telas que buscam dados (cardápio, pedidos, ingredientes), atualizando a página algumas vezes. No Terminal 1, as consultas passam a aparecer com prefixos de Pods diferentes:
 
 ```text
-[pod/dove-backend-6b9447ff8-p6q2j/backend] Hibernate:
-[pod/dove-backend-6b9447ff8-kz6jk/backend] Hibernate:
-[pod/dove-backend-6b9447ff8-2zxmb/backend] Hibernate:
+[pod/dove-backend-5f44c46989-ptw77/backend] Hibernate:
+[pod/dove-backend-5f44c46989-ntgxh/backend] Hibernate:
+[pod/dove-backend-5f44c46989-njkrj/backend] Hibernate:
 ```
 
 As linhas aparecem em blocos porque cada requisição gera várias consultas (validação do token JWT e busca dos dados), todas executadas no mesmo Pod. Requisições diferentes são distribuídas entre as réplicas.
 
-**Resultado obtido:** durante a navegação, as requisições foram atendidas pelas três réplicas: `dove-backend-6b9447ff8-p6q2j`, `dove-backend-6b9447ff8-kz6jk` e `dove-backend-6b9447ff8-2zxmb`. A distribuição é feita por conexão e é probabilística, por isso a quantidade de requisições por Pod não é igual.
+**Resultado obtido:** durante a navegação, as requisições foram atendidas pelas três réplicas: `dove-backend-5f44c46989-ptw77`, `dove-backend-5f44c46989-ntgxh` e `dove-backend-5f44c46989-njkrj`. A distribuição é feita por conexão e é probabilística, por isso a quantidade de requisições por Pod não é igual.
 
 ![Balanceamento pelos logs](evidencias/08-balanceamento-logs.png)
 
@@ -442,7 +442,7 @@ minikube ssh -- "sudo iptables -t nat -L KUBE-SVC-XXXXXXXXXXXXXXXX -n -v -x"
 | `dove-backend-6b9447ff8-2zxmb` | `10.244.0.15` | 39 | 48 | 9 |
 | **Total** | | **92** | **122** | **30** |
 
-As 30 conexões geradas foram distribuídas entre as três réplicas. Os contadores da tabela `nat` registram apenas o primeiro pacote de cada conexão, então cada incremento corresponde a uma nova conexão encaminhada àquele Pod. Os valores iniciais não são zero porque incluem as conexões da navegação feita no teste anterior. A distribuição não é exatamente 10/10/10 porque o sorteio é aleatório por conexão.
+As 30 conexões geradas foram distribuídas entre as três réplicas. Os contadores da tabela `nat` registram apenas o primeiro pacote de cada conexão, então cada incremento corresponde a uma nova conexão encaminhada àquele Pod. Os valores iniciais não são zero porque incluem conexões feitas anteriormente, durante o uso da aplicação. A distribuição não é exatamente 10/10/10 porque o sorteio é aleatório por conexão.
 
 ![Balanceamento pelo iptables](evidencias/09-balanceamento-iptables.png)
 
