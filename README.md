@@ -33,7 +33,7 @@ Todos os componentes da aplicação (frontend, backend e banco de dados) executa
 flowchart TB
     user["Navegador<br/>127.0.0.1:porta"]
 
-    subgraph cluster["Cluster Minikube"]
+    subgraph cluster["Cluster Minikube (nó único: minikube)"]
         svcFront["Service dove-frontend<br/>NodePort :80"]
 
         subgraph depFront["Deployment dove-frontend"]
@@ -58,7 +58,7 @@ flowchart TB
 
         pvc[("PVC mysql-pvc")]
         cm["ConfigMap backend-config"]
-        sec["Secrets mysql-secret, backend-secret"]
+        sec["Secrets backend-secret, mysql-secret"]
     end
 
     user -->|minikube service| svcFront
